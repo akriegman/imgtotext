@@ -1,0 +1,15 @@
+[package]
+name = "imgtotext"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rusttype = "0.9.2"
+image = "0.24.2"
+imageproc = "0.23.0"
+tap = "1.0.1"
+float-ord = "0.3.2"
+num = "0.4.0"
+conv = "0.3.3"
