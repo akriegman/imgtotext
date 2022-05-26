@@ -7,6 +7,12 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[profile.release]
+# panic = 'abort'
+
+[profile.dev]
+opt-level = 3
+
 [dependencies]
 rusttype = "0.9.2"
 image = "0.24.2"

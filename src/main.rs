@@ -1,7 +1,6 @@
 use clap::Parser;
 use fontconfig::Fontconfig;
 use image::io::Reader;
-use image::*;
 use imgtotext::*;
 use rusttype::*;
 use tap::prelude::*;
@@ -14,9 +13,13 @@ struct Args {
   font: String,
 
   /// The origin for the colorspace of the image. Can also be thought of a
-  /// darkness penalty.
+  /// darkness penalty. You will probably have to tweak this.
   #[clap(short, default_value = "10")]
   penalty: f32,
+
+  /// The origin for the colorspace of the characters, from 0 to 1.
+  #[clap(short, default_value = "0.01")]
+  origin: f32,
 
   /// The width of the resulting image in characters.
   #[clap(short, default_value = "80")]
@@ -48,6 +51,7 @@ fn main() -> std::io::Result<()> {
       font,
       args.w_img_char,
       args.penalty,
+      args.origin,
       !args.normal,
     )
   );

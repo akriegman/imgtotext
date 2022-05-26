@@ -1,38 +1,35 @@
 use conv::ValueInto;
 use float_ord::FloatOrd;
 use image::buffer::ConvertBuffer;
-use image::imageops::{filter3x3, resize};
+use image::imageops::{resize, FilterType};
 use image::*;
 use imageproc::definitions::*;
 use imageproc::filter::*;
+use imageproc::gradients::*;
 use num::Num;
 use rusttype::*;
 use tap::prelude::*;
+
+pub type Gray32FImage = ImageBuffer<Luma<f32>, Vec<f32>>;
+
+const CP437: &str = r##" !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■"##;
 
 pub fn render(
   img: GrayImage,
   font: Font,
   w_img_char: u32,
   penalty: f32,
+  origin: f32,
   edge_filter: bool,
 ) -> String {
-  let w_char_px = img.dimensions().0 as f32 / w_img_char as f32;
-  let scale = w_char_px
-    / font.glyph('m').scaled(Scale::uniform(1.)).h_metrics().advance_width;
-  let scale = Scale::uniform(scale);
+  let scale = Scale::uniform(20.);
+
+  let w_char_px = font.glyph('m').scaled(scale).h_metrics().advance_width;
   let h_char_px =
     font.v_metrics(scale).pipe(|it| it.ascent - it.descent + it.line_gap);
-  let h_img_char = (img.dimensions().1 as f32 / h_char_px).round() as u32;
 
-  // let img = resize(&img, )
-  
-  let img = if edge_filter {
-    filter3x3(&img, &[0., 1., 0., 1., -4., 1., 0., 1., 0.])
-  } else {
-    img
-  };
-
-  let chars = (32..127).map(char::from_u32).flatten();
+  // let chars = (32..127).map(char::from_u32).flatten();
+  let chars = CP437.chars();
   let glyphs = chars
     .clone()
     .map(|c| font.glyph(c).scaled(scale).positioned(Point { x: 0., y: 0. }));
@@ -47,21 +44,47 @@ pub fn render(
       None => bb,
     },
   );
-  println!("bb: {}..{}, {}..{}", bb.min.x, bb.max.x, bb.min.y, bb.max.x);
+
+  let h_img_char = (w_char_px / h_char_px
+    * w_img_char as f32
+    * img.dimensions().pipe(|it| it.1 as f32 / it.0 as f32))
+    as u32;
+
+  // let img: Gray32FImage = img.convert();
+
+  let img = resize(
+    &img,
+    w_img_char * bb.width() as u32,
+    h_img_char * bb.height() as u32,
+    FilterType::Triangle,
+  );
+
+  let img = if edge_filter {
+    let img = gaussian_blur_f32(&img, 1.4);
+    let img = sobel_gradients(&img);
+    img
+  } else {
+    img.convert()
+  };
+  
+  img.save("out/edges.png").unwrap();
 
   let kernels: Vec<_> = glyphs
     .clone()
     .map(|g| {
-      let mut ker = vec![0.; bb.width() as usize * bb.height() as usize];
+      let mut ker = vec![-origin; bb.width() as usize * bb.height() as usize];
       if let Some(gb) = g.pixel_bounding_box() {
         g.draw(|x, y, v| {
           assert!(x < bb.width() as u32);
           assert!(y < bb.height() as u32);
           ker[(x as i32 + gb.min.x - bb.min.x) as usize
             + (y as i32 + gb.min.y - bb.min.y) as usize
-              * bb.width() as usize] = v;
+              * bb.width() as usize] = v - origin;
         });
       }
+
+      let norm = ker.iter().map(|it| it.powi(2)).sum::<f32>().sqrt().powi(2);
+      ker.iter_mut().for_each(|it| *it /= norm);
       OwnedKernel::new(ker, bb.width() as u32, bb.height() as u32)
     })
     .collect();
@@ -70,10 +93,11 @@ pub fn render(
     GrayImage::from_vec(
       bb.width() as u32,
       bb.height() as u32,
-      ker.data.iter().map(|f| (f * 255.) as u8).collect(),
+      ker.data.iter().map(|f| (f * 2000. + 128.) as u8).collect(),
     )
     .unwrap()
-    .save(format!("out/{}.png", c));
+    .save(format!("out/{}.png", c))
+    .pipe(std::mem::drop);
   }
 
   let penalties: Vec<_> =
@@ -87,11 +111,11 @@ pub fn render(
           .clone()
           .zip(kernels.iter())
           .zip(penalties.iter())
-          .max_by_key(|((c, ker), p)| {
+          .max_by_key(|((_, ker), p)| {
             (ker.sample(
               &img,
-              (w_char_px * (x as f32 + 0.5)) as u32,
-              (h_char_px * (y as f32 + 0.5)) as u32,
+              bb.width() as u32 * x + bb.width() as u32 / 2,
+              bb.height() as u32 * y + bb.height() as u32 / 2,
             ) - **p)
               .pipe(FloatOrd)
           })
@@ -124,15 +148,15 @@ impl<'a, C: AsRef<[K]>, K: Num + Copy + 'a> OwnedKernel<C, K> {
     }
   }
 
-  fn filter<P, F, Q>(&self, image: &Image<P>, mut f: F) -> Image<Q>
-  where
-    P: Pixel,
-    <P as Pixel>::Subpixel: ValueInto<K>,
-    Q: Pixel,
-    F: FnMut(&mut Q::Subpixel, K),
-  {
-    Kernel::new(self.data.as_ref(), self.width, self.height).filter(image, f)
-  }
+  // fn filter<P, F, Q>(&self, image: &Image<P>, mut f: F) -> Image<Q>
+  // where
+  //   P: Pixel,
+  //   <P as Pixel>::Subpixel: ValueInto<K>,
+  //   Q: Pixel,
+  //   F: FnMut(&mut Q::Subpixel, K),
+  // {
+  //   Kernel::new(self.data.as_ref(), self.width, self.height).filter(image, f)
+  // }
 
   /// Partly copied from imageproc::filter::Kernel::filter
   /// Note: currently just uses first channel and ignores others
