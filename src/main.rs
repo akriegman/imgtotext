@@ -18,7 +18,7 @@ struct Args {
   penalty: f32,
 
   /// The origin for the colorspace of the characters, from 0 to 1.
-  #[clap(short, default_value = "0.01")]
+  #[clap(short, default_value = "0.")]
   origin: f32,
 
   /// The width of the resulting image in characters.
@@ -50,7 +50,7 @@ fn main() -> std::io::Result<()> {
       Reader::open(args.img)?.decode().unwrap().to_luma8(),
       font,
       args.w_img_char,
-      args.penalty,
+      // args.penalty,
       args.origin,
       !args.normal,
     )
