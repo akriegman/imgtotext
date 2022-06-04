@@ -7,8 +7,9 @@ use imageproc::definitions::*;
 use imageproc::filter::*;
 use imageproc::gradients::*;
 use imageproc::map::*;
-use num::{Num, Signed};
+use num::Num;
 use rusttype::*;
+use std::ops::Deref;
 use tap::prelude::*;
 
 pub type Gray32FImage = ImageBuffer<Luma<f32>, Vec<f32>>;
@@ -141,10 +142,11 @@ pub fn render(
           // .zip(penalties.iter())
           .min_by_key(|(_, ker)| {
             ker
-              .cost(
+              .sample(
                 &img,
                 bb.width() as u32 * x + bb.width() as u32 / 2,
                 bb.height() as u32 * y + bb.height() as u32 / 2,
+                |a, b| f32::abs(a - b),
               )
               .pipe(FloatOrd)
           })
@@ -158,14 +160,17 @@ pub fn render(
 }
 
 /// A wrapper around imageproc::filter::Kernel that owns it's data.
-pub struct OwnedKernel<C, K> {
+pub struct OwnedKernel<C, K>
+where
+  C: Deref<Target = [K]>,
+{
   data: C,
   width: u32,
   height: u32,
   _unused: std::marker::PhantomData<K>,
 }
 
-impl<'a, C: AsRef<[K]>, K: Num + Copy + 'a> OwnedKernel<C, K> {
+impl<'a, C: Deref<Target = [K]>, K: Num + Copy + 'a> OwnedKernel<C, K> {
   fn new(data: C, width: u32, height: u32) -> OwnedKernel<C, K> {
     Kernel::new(data.as_ref(), width, height); // Just to check assertions
     OwnedKernel::<C, K> {
@@ -176,19 +181,28 @@ impl<'a, C: AsRef<[K]>, K: Num + Copy + 'a> OwnedKernel<C, K> {
     }
   }
 
-  pub fn filter<P, F, Q>(&self, image: &Image<P>, f: F) -> Image<Q>
+  pub fn filter<P, F>(&self, image: &Image<P>, f: F) -> Image<Luma<K>>
   where
     P: Pixel,
     <P as Pixel>::Subpixel: ValueInto<K>,
-    Q: Pixel,
-    F: FnMut(&mut Q::Subpixel, K),
+    K: Primitive,
+    F: FnMut(K, K) -> K + Copy,
   {
-    Kernel::new(self.data.as_ref(), self.width, self.height).filter(image, f)
+    let (width, height) = image.dimensions();
+    let mut out = Image::<Luma<K>>::new(width, height);
+
+    for y in 0..height {
+      for x in 0..width {
+        *out.get_pixel_mut(x, y) =
+          self.sample(image, x, y, f).pipe(|it| Luma::<K>([it]));
+      }
+    }
+    out
   }
 
   /// Combine scalar values from the image and the kernel with f and add them
   /// up, with the kernel only in one position.
-  /// Partly copied from imageproc::filter::Kernel::filter
+  /// Largely copied from imageproc::filter::Kernel::filter
   /// Note: currently just uses first channel and ignores others
   pub fn sample<P, F>(&self, image: &Image<P>, x: u32, y: u32, mut f: F) -> K
   where
@@ -214,38 +228,6 @@ impl<'a, C: AsRef<[K]>, K: Num + Copy + 'a> OwnedKernel<C, K> {
               *self.data.as_ref().get_unchecked((k_y * k_width + k_x) as usize)
             },
           );
-      }
-    }
-    out
-  }
-
-  /// Distance squared from a cell of the image around a point
-  /// Note: serious code duplication from Self::sample, could
-  /// be abstracted but nah.
-  pub fn cost<P>(&self, image: &Image<P>, x: u32, y: u32) -> K
-  where
-    P: Pixel,
-    <P as Pixel>::Subpixel: ValueInto<K>,
-    K: Signed,
-  {
-    let (width, height) = image.dimensions();
-    let mut out = K::zero();
-    let (k_width, k_height) = (self.width as i64, self.height as i64);
-    let (width, height) = (width as i64, height as i64);
-
-    for k_y in 0..k_height {
-      let y_p = (height - 1).min(0.max(y as i64 + k_y - k_height / 2)) as u32;
-      for k_x in 0..k_width {
-        let x_p = (width - 1).min(0.max(x as i64 + k_x - k_width / 2)) as u32;
-        out = out
-          + (unsafe { &image.unsafe_get_pixel(x_p, y_p) }.channels()[0]
-            .value_into()
-            .unwrap()
-            - unsafe {
-              *self.data.as_ref().get_unchecked((k_y * k_width + k_x) as usize)
-            })
-          // .pipe(|it| it * it);
-          .pipe(|it| it.abs());
       }
     }
     out
