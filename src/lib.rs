@@ -75,9 +75,7 @@ pub fn render(
         .map(|it| it as f32 / 255. / 20f32.sqrt())
         .pipe(Luma)
     });
-    let max =
-      img.pixels().map(|p| p.channels()[0].pipe(FloatOrd)).max().unwrap().0;
-    let img = map_subpixels(&img, |p| p / max * (1. - origin) + origin);
+    let img = normalize(&img);
     img
   } else {
     let mut img: DynamicImage = img.into();
@@ -125,11 +123,14 @@ pub fn render(
     .unwrap()
     .save(format!("out/{}.png", c))
     .pipe(std::mem::drop);
+
+    let mut it: DynamicImage =
+      (&ker.filter(&img, |a, b| f32::abs(a - b))).pipe(normalize).into();
+    it.invert();
+    it.to_luma8().save(format!("out/filter_{}.png", c)).pipe(std::mem::drop);
   }
 
-  // let penalties: Vec<_> =
-  //   kernels.iter().map(|ker| ker.data.iter().sum::<f32>() * penalty).collect();
-
+  /* --- Score every character at every position --- */
   /* --- Render best fit characters to a string --- */
 
   let mut out = String::new();
@@ -157,6 +158,12 @@ pub fn render(
     out.push('\n');
   }
   out
+}
+
+fn normalize(image: &Gray32FImage) -> Gray32FImage {
+  let max =
+    image.pixels().map(|p| p.channels()[0].pipe(FloatOrd)).max().unwrap().0;
+  map_subpixels(image, |p| p / max)
 }
 
 /// A wrapper around imageproc::filter::Kernel that owns it's data.

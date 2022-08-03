@@ -18,7 +18,7 @@ struct Args {
   penalty: f32,
 
   /// The origin for the colorspace of the characters, from 0 to 1.
-  #[clap(short, default_value = "0.")]
+  #[clap(short, default_value = "0")]
   origin: f32,
 
   /// The width of the resulting image in characters.
